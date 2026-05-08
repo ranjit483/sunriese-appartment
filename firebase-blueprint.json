@@ -1,0 +1,147 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile containing role and basic info",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string", "enum": ["SuperAdmin", "Manager", "OfficeAssistant", "Resident", "Tenant", "RentalOwner", "Staff"] },
+        "phone": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["email", "name", "role", "createdAt", "updatedAt"]
+    },
+    "Building": {
+      "title": "Building",
+      "description": "An apartment building or tower",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "floors": { "type": "number" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["name", "floors", "createdAt", "updatedAt"]
+    },
+    "Unit": {
+      "title": "Unit",
+      "description": "An apartment unit",
+      "type": "object",
+      "properties": {
+        "buildingId": { "type": "string" },
+        "unitNumber": { "type": "string" },
+        "floor": { "type": "number" },
+        "type": { "type": "string" },
+        "areaSqFt": { "type": "number" },
+        "bedrooms": { "type": "number" },
+        "bathrooms": { "type": "number" },
+        "status": { "type": "string", "enum": ["Vacant", "Occupied", "Reserved", "Under maintenance"] },
+        "ownerId": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["buildingId", "unitNumber", "floor", "type", "status", "createdAt", "updatedAt"]
+    },
+    "Lease": {
+      "title": "Lease",
+      "description": "A lease agreement for a unit",
+      "type": "object",
+      "properties": {
+        "unitId": { "type": "string" },
+        "tenantId": { "type": "string" },
+        "startDate": { "type": "number" },
+        "endDate": { "type": "number" },
+        "monthlyRent": { "type": "number" },
+        "depositAmount": { "type": "number" },
+        "status": { "type": "string", "enum": ["Active", "Expired", "Terminated"] },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["unitId", "tenantId", "startDate", "endDate", "monthlyRent", "depositAmount", "status", "createdAt", "updatedAt"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Monthly invoice for utility, maintenance, and service charges",
+      "type": "object",
+      "properties": {
+        "unitId": { "type": "string" },
+        "userId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "month": { "type": "string" },
+        "year": { "type": "number" },
+        "totalAmount": { "type": "number" },
+        "dueDate": { "type": "number" },
+        "status": { "type": "string", "enum": ["Paid", "Unpaid", "Overdue", "Partial"] },
+        "items": { "type": "array" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["unitId", "userId", "month", "year", "totalAmount", "dueDate", "status", "createdAt", "updatedAt"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Payment records for invoices",
+      "type": "object",
+      "properties": {
+        "invoiceId": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "method": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["invoiceId", "userId", "amount", "method", "status", "createdAt"]
+    },
+    "MaintenanceTicket": {
+      "title": "Maintenance Ticket",
+      "description": "Resident complaints and maintenance issues",
+      "type": "object",
+      "properties": {
+        "unitId": { "type": "string" },
+        "creatorId": { "type": "string" },
+        "category": { "type": "string" },
+        "priority": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["Open", "Assigned", "In Progress", "Pending Parts", "Completed", "Closed"] },
+        "assignedTo": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["unitId", "creatorId", "category", "priority", "description", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "buildings/{buildingId}": {
+      "schema": { "$ref": "#/entities/Building" },
+      "description": "Buildings in the apartment mapping"
+    },
+    "units/{unitId}": {
+      "schema": { "$ref": "#/entities/Unit" },
+      "description": "Apartment units"
+    },
+    "leases/{leaseId}": {
+      "schema": { "$ref": "#/entities/Lease" },
+      "description": "Lease agreements"
+    },
+    "invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/Invoice" },
+      "description": "Billing records/invoices"
+    },
+    "payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Payment records"
+    },
+    "maintenance_tickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/MaintenanceTicket" },
+      "description": "Maintenance tickets"
+    }
+  }
+}

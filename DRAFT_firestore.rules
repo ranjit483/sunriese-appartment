@@ -1,0 +1,139 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primtives
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+
+    match /admins/{userId} {
+      allow read: if isAdmin();
+      allow write: if false; // Only manageable through Firebase Console initially
+    }
+
+    // Users Collection
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'name', 'role', 'createdAt', 'updatedAt']) &&
+             data.email is string && data.email.size() <= 150 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.role is string && data.role in ['SuperAdmin', 'Manager', 'OfficeAssistant', 'Resident', 'Tenant', 'RentalOwner', 'Staff'] &&
+             data.createdAt is number && data.updatedAt is number;
+    }
+
+    match /users/{userId} {
+      // Allow read if user is accessing their own profile or if they are admin
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin(); // No blanket reads
+
+      // Admins can create
+      allow create: if isValidId(userId) && isAdmin() && isValidUser(incoming()) && incoming().createdAt == request.time;
+      
+      // Update action pattern
+      allow update: if isValidId(userId) && (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && (
+        isAdmin() ||
+        (
+          isOwner(userId) && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'updatedAt']) &&
+          incoming().updatedAt == request.time &&
+          incoming().role == existing().role // Role is immutable by the user
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Buildings
+    function isValidBuilding(data) {
+      return data.keys().hasAll(['name', 'floors', 'createdAt', 'updatedAt']) &&
+             data.name is string && data.name.size() <= 100 &&
+             data.floors is number &&
+             data.createdAt is number && data.updatedAt is number;
+    }
+    match /buildings/{buildingId} {
+      allow get: if isValidId(buildingId) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isValidId(buildingId) && isAdmin() && isValidBuilding(incoming()) && incoming().createdAt == request.time;
+      allow update: if isValidId(buildingId) && isAdmin() && isValidBuilding(incoming()) && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    // Units
+    function isValidUnit(data) {
+      return data.keys().hasAll(['buildingId', 'unitNumber', 'floor', 'type', 'status', 'createdAt', 'updatedAt']) &&
+             data.buildingId is string && data.buildingId.size() <= 128 &&
+             data.unitNumber is string && data.unitNumber.size() <= 50 &&
+             data.floor is number &&
+             data.type is string && data.type.size() <= 50 &&
+             data.status is string && data.status in ["Vacant", "Occupied", "Reserved", "Under maintenance"] &&
+             data.createdAt is number && data.updatedAt is number;
+    }
+    match /units/{unitId} {
+      allow get: if isValidId(unitId) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create, update: if isValidId(unitId) && isAdmin() && isValidUnit(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Leases
+    match /leases/{leaseId} {
+      allow get: if isValidId(leaseId) && (isAdmin() || (isSignedIn() && existing().tenantId == request.auth.uid));
+      allow list: if isSignedIn() && (isAdmin() || resource.data.tenantId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Invoices
+    match /invoices/{invoiceId} {
+      allow get: if isValidId(invoiceId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Payments
+    match /payments/{paymentId} {
+       allow get: if isValidId(paymentId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+       allow list: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+       allow create: if isValidId(paymentId) && isSignedIn() && incoming().userId == request.auth.uid;
+       allow update, delete: if isAdmin();
+    }
+
+    // Maintenance Tickets
+    function isValidTicket(data) {
+      return data.keys().hasAll(['unitId', 'creatorId', 'category', 'priority', 'description', 'status', 'createdAt', 'updatedAt']) &&
+             data.unitId is string && data.unitId.size() <= 128 &&
+             data.creatorId is string && data.creatorId.size() <= 128 &&
+             data.category is string && data.category.size() <= 50 &&
+             data.priority is string && data.priority.size() <= 20 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.status is string && data.status in ["Open", "Assigned", "In Progress", "Pending Parts", "Completed", "Closed"] &&
+             data.createdAt is number && data.updatedAt is number;
+    }
+    match /maintenance_tickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (isAdmin() || (isSignedIn() && existing().creatorId == request.auth.uid));
+      allow list: if isSignedIn() && (isAdmin() || resource.data.creatorId == request.auth.uid);
+      
+      allow create: if isValidId(ticketId) && isSignedIn() && isValidTicket(incoming()) && 
+                    incoming().creatorId == request.auth.uid &&
+                    incoming().createdAt == request.time;
+
+      allow update: if isValidId(ticketId) && (isAdmin() || isOwner(existing().creatorId)) && isValidTicket(incoming()) && (
+        isAdmin() ||
+        (
+          isOwner(existing().creatorId) && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['description', 'updatedAt']) &&
+          existing().status in ["Open", "Assigned"] &&
+          incoming().updatedAt == request.time
+        )
+      );
+      
+      allow delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,185 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Primitives
+    function isSignedIn() { return request.auth != null; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isAdmin() { return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)); }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+
+    match /admins/{userId} {
+      allow read: if isAdmin();
+      allow write: if false; 
+    }
+
+    // Users Collection
+    function isValidUser(data) {
+      return data.keys().hasAll(['email', 'name', 'role', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 7 &&
+             data.email is string && data.email.size() <= 150 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.role is string && data.role in ['SuperAdmin', 'Manager', 'OfficeAssistant', 'Resident', 'Tenant', 'RentalOwner', 'Staff'] &&
+             data.createdAt is number && data.updatedAt is number &&
+             (!('phone' in data.keys()) || (data.phone is string && data.phone.size() <= 20)) &&
+             (!('avatarUrl' in data.keys()) || (data.avatarUrl is string && data.avatarUrl.size() <= 1000));
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isValidId(userId) && (isAdmin() || isOwner(userId)) && isValidUser(incoming()) && incoming().createdAt == request.time &&
+                    (isAdmin() || incoming().role == 'Resident'); // Only admins can create high-level roles, self-registered users are Residents (or wait, shouldn't self-registration assign standard role?)
+      
+      allow update: if isValidId(userId) && (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && (
+        isAdmin() ||
+        (
+          isOwner(userId) && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatarUrl', 'updatedAt']) &&
+          incoming().updatedAt == request.time &&
+          incoming().role == existing().role
+        )
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Buildings
+    function isValidBuilding(data) {
+      return data.keys().hasAll(['name', 'floors', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 5 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.floors is number &&
+             data.createdAt is number && data.updatedAt is number &&
+             (!('description' in data.keys()) || (data.description is string && data.description.size() <= 500));
+    }
+    match /buildings/{buildingId} {
+      allow get: if isValidId(buildingId) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isValidId(buildingId) && isAdmin() && isValidBuilding(incoming()) && incoming().createdAt == request.time;
+      allow update: if isValidId(buildingId) && isAdmin() && isValidBuilding(incoming()) && incoming().updatedAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    // Units
+    function isValidUnit(data) {
+      return data.keys().hasAll(['buildingId', 'unitNumber', 'floor', 'type', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 9 &&
+             data.buildingId is string && data.buildingId.size() <= 128 &&
+             data.unitNumber is string && data.unitNumber.size() <= 50 &&
+             data.floor is number &&
+             data.type is string && data.type.size() <= 50 &&
+             data.status is string && data.status in ["Vacant", "Occupied", "Reserved", "Under maintenance"] &&
+             data.createdAt is number && data.updatedAt is number &&
+             (!('areaSqFt' in data.keys()) || data.areaSqFt is number) &&
+             (!('bedrooms' in data.keys()) || data.bedrooms is number);
+    }
+    match /units/{unitId} {
+      allow get: if isValidId(unitId) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create, update: if isValidId(unitId) && isAdmin() && isValidUnit(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Leases
+    function isValidLease(data) {
+      return data.keys().hasAll(['unitId', 'tenantId', 'startDate', 'endDate', 'monthlyRent', 'depositAmount', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().size() == 9 &&
+             data.unitId is string && data.unitId.size() <= 128 &&
+             data.tenantId is string && data.tenantId.size() <= 128 &&
+             data.startDate is number &&
+             data.endDate is number &&
+             data.monthlyRent is number &&
+             data.depositAmount is number &&
+             data.status is string && data.status in ["Active", "Expired", "Terminated"] &&
+             data.createdAt is number && data.updatedAt is number;
+    }
+    match /leases/{leaseId} {
+      allow get: if isValidId(leaseId) && (isAdmin() || (isSignedIn() && existing().tenantId == request.auth.uid));
+      allow list: if isSignedIn() && (isAdmin() || resource.data.tenantId == request.auth.uid);
+      allow create, update: if isValidId(leaseId) && isAdmin() && isValidLease(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Invoices
+    function isValidInvoice(data) {
+      return data.keys().hasAll(['unitId', 'userId', 'invoiceNumber', 'month', 'year', 'totalAmount', 'dueDate', 'status', 'items', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 12 &&
+             data.unitId is string && data.unitId.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.invoiceNumber is string && data.invoiceNumber.size() <= 50 &&
+             data.month is string && data.month.size() <= 20 &&
+             data.year is number &&
+             data.totalAmount is number &&
+             data.dueDate is number &&
+             data.status is string && data.status in ["Paid", "Unpaid", "Overdue", "Partial"] &&
+             data.items is list && data.items.size() <= 50 &&
+             data.createdAt is number && data.updatedAt is number;
+    }
+    match /invoices/{invoiceId} {
+      allow get: if isValidId(invoiceId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+      allow list: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create, update: if isValidId(invoiceId) && isAdmin() && isValidInvoice(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Payments
+    function isValidPayment(data) {
+      return data.keys().hasAll(['invoiceId', 'userId', 'amount', 'method', 'status', 'createdAt']) &&
+             data.keys().size() <= 7 &&
+             data.invoiceId is string && data.invoiceId.size() <= 128 &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.amount is number &&
+             data.method is string && data.method.size() <= 50 &&
+             data.status is string && data.status.size() <= 50 &&
+             data.createdAt is number;
+    }
+    match /payments/{paymentId} {
+       allow get: if isValidId(paymentId) && (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid));
+       allow list: if isSignedIn() && (isAdmin() || resource.data.userId == request.auth.uid);
+       allow create: if isValidId(paymentId) && isSignedIn() && incoming().userId == request.auth.uid && isValidPayment(incoming());
+       allow update, delete: if isAdmin();
+    }
+
+    // Maintenance Tickets
+    function isValidTicket(data) {
+      return data.keys().hasAll(['unitId', 'creatorId', 'category', 'priority', 'description', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 9 &&
+             data.unitId is string && data.unitId.size() <= 128 &&
+             data.creatorId is string && data.creatorId.size() <= 128 &&
+             data.category is string && data.category.size() <= 50 &&
+             data.priority is string && data.priority.size() <= 20 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.status is string && data.status in ["Open", "Assigned", "In Progress", "Pending Parts", "Completed", "Closed"] &&
+             data.createdAt is number && data.updatedAt is number &&
+             (!('assignedTo' in data.keys()) || (data.assignedTo is string && data.assignedTo.size() <= 128));
+    }
+    match /maintenance_tickets/{ticketId} {
+      allow get: if isValidId(ticketId) && (isAdmin() || (isSignedIn() && existing().creatorId == request.auth.uid));
+      allow list: if isSignedIn() && (isAdmin() || resource.data.creatorId == request.auth.uid);
+      
+      allow create: if isValidId(ticketId) && isSignedIn() && isValidTicket(incoming()) && 
+                    incoming().creatorId == request.auth.uid &&
+                    incoming().createdAt == request.time;
+
+      allow update: if isValidId(ticketId) && (isAdmin() || isOwner(existing().creatorId)) && isValidTicket(incoming()) && (
+        isAdmin() ||
+        (
+          isOwner(existing().creatorId) && 
+          incoming().diff(existing()).affectedKeys().hasOnly(['description', 'updatedAt']) &&
+          existing().status in ["Open", "Assigned"] &&
+          incoming().updatedAt == request.time
+        )
+      );
+      
+      allow delete: if isAdmin();
+    }
+  }
+}
